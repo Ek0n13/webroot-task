@@ -74,13 +74,13 @@ const entitySchema = z
   .strict()
 
 /** A candidate for independent verification, not a verified fact; attribution may be absent. */
-const checkableClaimSchema = z
-  .object({
-    claim: z.string().trim().min(1).max(600),
-    attribution: z.string().trim().min(1).max(300).nullable(),
-    verificationPriority: z.enum(['high', 'medium', 'low']),
-  })
-  .strict()
+// const checkableClaimSchema = z
+//   .object({
+//     claim: z.string().trim().min(1).max(600),
+//     attribution: z.string().trim().min(1).max(300).nullable(),
+//     verificationPriority: z.enum(['high', 'medium', 'low']),
+//   })
+//   .strict()
 
 /**
  * Complete briefing contract used for both SDK JSON Schema generation and
@@ -102,10 +102,10 @@ export const articleBriefingSchema = z
       .describe('The most important distinct developments in the article.'),
     entities: z.array(entitySchema).max(20),
     topics: z.array(z.string().trim().min(1).max(100)).max(10),
-    checkableClaims: z
-      .array(checkableClaimSchema)
-      .max(10)
-      .describe('Specific claims an editor could independently verify.'),
+    // checkableClaims: z
+    //   .array(checkableClaimSchema)
+    //   .max(10)
+    //   .describe('Specific claims an editor could independently verify.'),
     editorial: z
       .object({
         category: z
@@ -114,28 +114,28 @@ export const articleBriefingSchema = z
           .min(1)
           .max(100)
           .describe('A reader-facing desk or section label.'),
-        newsworthiness: z.enum(['high', 'medium', 'low']),
-        rationale: z.string().trim().min(1).max(500),
-        suggestedFollowUps: z.array(z.string().trim().min(1).max(400)).max(5),
+        // newsworthiness: z.enum(['high', 'medium', 'low']),
+        // rationale: z.string().trim().min(1).max(500),
+        // suggestedFollowUps: z.array(z.string().trim().min(1).max(400)).max(5),
       })
       .strict(),
-    confidence: z
-      .object({
-        level: z
-          .enum(['high', 'medium', 'low'])
-          .describe(
-            'Confidence that the briefing faithfully captures the explicit article content, not confidence that the source is true.',
-          ),
-        rationale: z
-          .string()
-          .trim()
-          .min(1)
-          .max(400)
-          .describe(
-            'The source-content limitations behind the confidence level.',
-          ),
-      })
-      .strict(),
+    // confidence: z
+    //   .object({
+    //     level: z
+    //       .enum(['high', 'medium', 'low'])
+    //       .describe(
+    //         'Confidence that the briefing faithfully captures the explicit article content, not confidence that the source is true.',
+    //       ),
+    //     rationale: z
+    //       .string()
+    //       .trim()
+    //       .min(1)
+    //       .max(400)
+    //       .describe(
+    //         'The source-content limitations behind the confidence level.',
+    //       ),
+    //   })
+    //   .strict(),
     caveats: z.array(z.string().trim().min(1).max(400)).max(6),
   })
   .strict()

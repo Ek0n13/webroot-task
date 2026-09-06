@@ -82,7 +82,7 @@ export function ArticleBriefing({
         )}
       </section>
 
-      <section aria-labelledby="claims-heading">
+      {/* <section aria-labelledby="claims-heading">
         <h3 id="claims-heading" className="section-label">
           Claims to check{' '}
           <span className="count">{briefing.checkableClaims.length}</span>
@@ -162,7 +162,7 @@ export function ArticleBriefing({
             No additional caveats returned. Independent review is still needed.
           </p>
         )}
-      </section>
+      </section> */}
 
       <details className="analysis-details">
         <summary>Analysis details</summary>
