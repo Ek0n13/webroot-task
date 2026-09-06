@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# The utility's published peer range stops at TS 5; its types are checked here against TS 6.
+peerDependencyRules:
+  allowedVersions:
+    '@maxmorozoff/try-catch-tuple>typescript': '^6.0.0'
+
+allowBuilds:
+  esbuild: true
+  lightningcss: true
+  unrs-resolver: true

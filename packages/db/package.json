@@ -1,0 +1,23 @@
+{
+  "name": "@article/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrate": "./src/migrate.ts"
+  },
+  "scripts": {
+    "migrate": "tsx --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local src/setup.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@article/schemas": "workspace:*",
+    "@maxmorozoff/try-catch-tuple": "^0.1.2",
+    "pg": "^8.23.0",
+    "pg-boss": "12.30.0",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
