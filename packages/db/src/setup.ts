@@ -8,7 +8,7 @@ async function setup() {
   const [, setupError] = await tryCatch.async(async () => {
     await migrate(db)
     await configureQueue(db.boss)
-    console.info('Application migrations and analysis queue are ready.')
+    console.info('Application migrations and worker queues are ready.')
   })
   // Close the pool on both success and failure before propagating the setup error.
   await db.close()

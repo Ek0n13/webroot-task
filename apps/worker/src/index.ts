@@ -8,6 +8,7 @@ import {
 } from 'ai'
 import {
   ANALYSIS_QUEUE,
+  COMPARISON_QUEUE,
   claimQueuedAnalysisAndLoadArticle,
   connectDatabase,
   pruneAnalyses,
@@ -18,6 +19,9 @@ import {
   articleAnalysisInputSchema,
   articleBriefingSchema,
   articleClassificationSchema,
+  articleComparisonInputSchema,
+  articleComparisonSchema,
+  comparisonJobSchema,
 } from '@article/schemas'
 import {
   classificationSystemPrompt,
@@ -25,16 +29,26 @@ import {
   createAnalysisSystemPrompt,
   createClassificationPrompt,
 } from './article-analysis.prompts'
+import {
+  comparisonSystemPrompt,
+  createComparisonPrompt,
+} from './article-comparison.prompts'
 import type { Database } from '@article/db'
 import type {
   ArticleAnalysisInput,
   ArticleAnalysisResult,
+  ArticleComparisonInput,
+  ArticleComparisonResult,
 } from '@article/schemas'
 import type { Job } from 'pg-boss'
 
 export type Analyzer = (
   input: ArticleAnalysisInput,
 ) => Promise<ArticleAnalysisResult>
+
+export type Comparer = (
+  input: ArticleComparisonInput,
+) => Promise<ArticleComparisonResult>
 
 export async function handleAnalysisJob(
   db: Database,
@@ -202,6 +216,107 @@ export async function analyzeArticle(
   }
 }
 
+/**
+ * Compares two articles directly with one structured-output request.
+ * There is deliberately no classification stage or malformed-output retry.
+ */
+export async function compareArticles(
+  input: ArticleComparisonInput,
+): Promise<ArticleComparisonResult> {
+  const parsedInput = articleComparisonInputSchema.parse(input)
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim()
+  const modelName = process.env.OPENROUTER_MODEL?.trim()
+  if (
+    !apiKey ||
+    apiKey === 'replace-with-your-openrouter-api-key' ||
+    !modelName
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'CONFIGURATION',
+        message: 'OpenRouter configuration is missing or invalid.',
+        retryable: false,
+      },
+    }
+  }
+
+  const model = openrouter(modelName, {
+    structuredOutputs: { strict: true },
+    reasoning: { effort: 'low', exclude: true },
+  })
+  const [comparison, error] = await tryCatch.async(async () => {
+    const result = await generateText({
+      model,
+      maxRetries: 0,
+      output: Output.object({
+        schema: articleComparisonSchema,
+        name: 'article_comparison',
+      }),
+      instructions: comparisonSystemPrompt,
+      prompt: createComparisonPrompt(
+        parsedInput.articleA,
+        parsedInput.articleB,
+      ),
+      maxOutputTokens: 8_192,
+    })
+    if (result.finishReason !== 'stop') throw new NoObjectGeneratedError(result)
+    return result
+  })
+
+  if (comparison) {
+    return {
+      ok: true,
+      comparison: comparison.output,
+      metadata: {
+        model: comparison.response.modelId || modelName,
+        comparedAt: new Date().toISOString(),
+        usage: {
+          promptTokens: comparison.usage.inputTokens ?? 0,
+          completionTokens: comparison.usage.outputTokens ?? 0,
+          totalTokens: comparison.usage.totalTokens ?? 0,
+        },
+      },
+    }
+  }
+
+  if (
+    NoObjectGeneratedError.isInstance(error) ||
+    NoOutputGeneratedError.isInstance(error)
+  ) {
+    const incomplete =
+      NoObjectGeneratedError.isInstance(error) && error.finishReason !== 'stop'
+    return {
+      ok: false,
+      error: {
+        code: incomplete ? 'INCOMPLETE_RESPONSE' : 'INVALID_RESPONSE',
+        message: incomplete
+          ? 'The comparison provider returned an incomplete response.'
+          : 'The comparison provider returned an invalid result.',
+        retryable: true,
+      },
+    }
+  }
+
+  return {
+    ok: false,
+    error: {
+      code: 'PROVIDER_ERROR',
+      message: 'The comparison provider could not complete this request.',
+      retryable: true,
+    },
+  }
+}
+
+/** Returns the result so pg-boss stores it as this job's completion output. */
+export async function handleComparisonJob(
+  job: Job<unknown>,
+  compare: Comparer = compareArticles,
+) {
+  const input = comparisonJobSchema.parse(job.data)
+  return compare(input)
+}
+
 async function main() {
   const concurrency = Number(process.env.WORKER_CONCURRENCY)
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
@@ -216,6 +331,11 @@ async function main() {
       ANALYSIS_QUEUE,
       { batchSize: 1, localConcurrency: concurrency },
       async ([job]) => handleAnalysisJob(db, job),
+    )
+    await db.boss.work<ArticleComparisonInput, ArticleComparisonResult>(
+      COMPARISON_QUEUE,
+      { batchSize: 1, localConcurrency: concurrency },
+      async ([job]) => handleComparisonJob(job),
     )
   })
   if (workerError) {
@@ -247,7 +367,7 @@ async function main() {
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
-  console.info(`Analysis worker ready (concurrency ${concurrency}).`)
+  console.info(`Article worker ready (concurrency ${concurrency} per queue).`)
 }
 
 const [, error] = await tryCatch.async(main)

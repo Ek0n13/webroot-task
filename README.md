@@ -1,8 +1,8 @@
 # Article Intelligence
 
-A TypeScript application for turning submitted news articles into structured briefings using Gemini through OpenRouter. Analysis runs asynchronously in a pg-boss worker, not inside a TanStack Start HTTP request.
+A TypeScript application for turning submitted news articles into structured briefings and comparing pairs of articles using Gemini through OpenRouter. AI work runs asynchronously in a pg-boss worker, not inside a TanStack Start HTTP request.
 
-The web workspace accepts pasted article text, follows queued analysis through completion, and presents an editorial briefing alongside a searchable table of saved analyses.
+The web workspace accepts pasted article text, follows queued work through completion, and presents either an editorial briefing or a direct comparison of two sources. Individual analyses have searchable saved history; comparisons use only temporary pg-boss job payloads and outputs.
 
 ## Workspace Layout
 
@@ -117,6 +117,8 @@ Reuse the same `requestId` if a submission's response is lost; repeated submissi
 
 `getRecentArticleAnalyses()` lists the latest 50 unexpired analyses, newest first. It returns short source previews, status, submission time, and editorial category, not full article text or briefings. Database failures return a sanitized `HISTORY_UNAVAILABLE` error. Active jobs use the same crash reconciliation as individual status reads.
 
+Article comparison follows the same submit-and-poll browser flow through `apps/web/src/features/article-comparison/server/article-comparison.functions.ts`. The request UUID is also its pg-boss job ID. Both articles are stored in the queue payload, and the worker's validated return value is stored as the job output. There is no comparison application table, database migration, or comparison history. Queue retention removes the temporary input and result after one day.
+
 ## Web Workspace
 
 - **TanStack Query v5** manages submission mutations, saved-history reads, and status polling around the typed server functions. Its official Router SSR integration creates a QueryClient per request/browser lifecycle, provides it app-wide through router context, and handles dehydration, hydration, and streaming without a server-global cache. The index loader preloads history before the workspace renders.
@@ -124,6 +126,7 @@ Reuse the same `requestId` if a submission's response is lost; repeated submissi
 - **Navigation:** a single `/` workspace keeps the source, briefing, and history together. The index loader seeds the Query cache, and selecting a briefing prefetches its status before mounting the status view. Deep links and browser Back/Forward between selections are deferred.
 - Paste 100-50,000 trimmed characters. The form uses the shared Zod schema, shows word/character counts, and keeps the source visible while analysis runs. There is no file upload or URL extraction.
 - Pending analyses refresh every two seconds. Terminal results and missing IDs stop interval polling; transient read failures back off up to 30 seconds. History refreshes every two seconds while it contains active jobs, otherwise every 30 seconds. Background tabs pause interval polling and reconnect/focus refreshes reads.
+- The comparison workspace accepts two independently validated articles and polls a temporary pg-boss job every two seconds. Its result separates similarities and differences, shows each article's position for every point, and concludes with source limitations and model metadata.
 - Submissions never retry automatically. An uncertain submission locks its source text and preserves the exact request ID for an explicit safe retry. Starting a new submission is a separate user action and may incur another provider charge. Pending request IDs and draft text are in-memory only: after a reload, consult database-backed history before submitting again.
 - Briefings display summaries, developments, entities, topics, verification priorities and attribution, editorial follow-ups, confidence, caveats, and model metadata. Empty sections explain absent information. Claims are explicitly unverified, and confidence measures source fidelity rather than truth.
 - The responsive layout uses local system fonts, semantic sections, explicit form labels, keyboard-operable table controls, visible focus states, a skip link, live error/progress messages, and reduced-motion styles. On small screens panels stack and only the table scrolls horizontally.
@@ -152,6 +155,8 @@ The public analysis states are `queued`, `processing`, `completed`, and `failed`
 
 Queue payloads contain only the analysis ID. Articles and results are retained for seven days, become inaccessible at expiry, and are deleted at worker startup and hourly while a worker is running. Queue history is retained separately for one day. If no worker is running, cleanup waits until one starts.
 
+Comparison is deliberately different: its queue payload contains both articles and its completion output contains the result. The web server reads that output by job ID and validates it against the shared schema before returning it to the browser. pg-boss removes both after its one-day retention window, so comparisons cannot be revisited through application history.
+
 Queue retries are disabled (`retryLimit: 0`). This intentionally trades automatic recovery for simpler behavior and avoids overlapping paid attempts after a timeout or worker crash. Only queued article records can start, and terminal results cannot be overwritten. To rerun a failed analysis, submit it with a **new** request ID; do not manually retry the old pg-boss job. Resubmission may be billable even if the previous worker crashed before saving a completed LLM response.
 
 When upgrading an existing database, stop running workers, run `pnpm db:migrate`, then restart them. The migrations retain existing articles/results while bringing the analysis table and queued-job settings up to date.
@@ -159,6 +164,8 @@ When upgrading an existing database, stop running workers, run `pnpm db:migrate`
 ## Analysis And Reliability
 
 The worker first classifies the article, then selects static editorial guidance for its type (politics, health, science, sports, opinion, etc.). The briefing contains a summary, developments, entities, topics, checkable claims, editorial assessment, confidence, and caveats. Prompts require source grounding and careful attribution; article text is treated as untrusted content.
+
+Comparisons skip classification. They use exactly one structured `generateText` call with SDK retries disabled, producing material similarities, differences, a conclusion, and caveats grounded only in the two supplied articles.
 
 Both stages use Vercel AI SDK `generateText` with `Output.object` and the standard OpenRouter provider. Strict JSON Schema output and a normal completion reason are required. Schema validation checks shape, not factual truth; editorial review is still necessary.
 

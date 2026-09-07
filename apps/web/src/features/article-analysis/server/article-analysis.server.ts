@@ -1,24 +1,10 @@
 import { tryCatch } from '@maxmorozoff/try-catch-tuple'
 import {
-  connectDatabase,
   getAnalysisStatus,
   listRecentAnalyses,
   submitAnalysis,
 } from '@article/db'
-
-let connection: ReturnType<typeof connectDatabase> | undefined
-
-/** Reuses the producer pool per process and allows recovery from failed initial connections. */
-function database() {
-  connection ??= tryCatch.async(connectDatabase).then(([db, error]) => {
-    if (error) {
-      connection = undefined
-      throw error
-    }
-    return db
-  })
-  return connection
-}
+import { database } from '../../../server/database.server'
 
 /** Creates a durable job without importing the worker or calling an LLM in the request. */
 export async function submitOnServer(input: {

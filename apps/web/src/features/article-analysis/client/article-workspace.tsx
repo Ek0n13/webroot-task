@@ -4,10 +4,14 @@ import { AnalysisBriefingPanel } from './analysis-briefing-panel'
 import { AnalysisHistoryPanel } from './analysis-history-panel'
 import { ArticleComposer } from './article-composer'
 import { statusOptions } from './article-analysis.queries'
+import { ComparisonWorkspace } from '../../article-comparison/client/comparison-workspace'
+
+type WorkspaceMode = 'analysis' | 'comparison'
 
 export function ArticleWorkspace() {
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [mode, setMode] = useState<WorkspaceMode>('analysis')
   const briefingHeading = useRef<HTMLHeadingElement>(null)
 
   function selectAnalysis(analysisId: string) {
@@ -50,18 +54,40 @@ export function ArticleWorkspace() {
           </div>
         </div>
 
-        <div className="workspace-grid">
-          <ArticleComposer onSubmitted={selectAnalysis} />
-          <AnalysisBriefingPanel
-            analysisId={selectedId}
-            headingRef={briefingHeading}
+        <nav className="workspace-switcher" aria-label="Editorial tools">
+          <button
+            type="button"
+            aria-current={mode === 'analysis' ? 'page' : undefined}
+            onClick={() => setMode('analysis')}
+          >
+            Analyze one article
+          </button>
+          <button
+            type="button"
+            aria-current={mode === 'comparison' ? 'page' : undefined}
+            onClick={() => setMode('comparison')}
+          >
+            Compare two articles
+          </button>
+        </nav>
+
+        <div hidden={mode !== 'analysis'}>
+          <div className="workspace-grid">
+            <ArticleComposer onSubmitted={selectAnalysis} />
+            <AnalysisBriefingPanel
+              analysisId={selectedId}
+              headingRef={briefingHeading}
+            />
+          </div>
+
+          <AnalysisHistoryPanel
+            selectedId={selectedId}
+            onSelect={selectAnalysis}
           />
         </div>
-
-        <AnalysisHistoryPanel
-          selectedId={selectedId}
-          onSelect={selectAnalysis}
-        />
+        <div hidden={mode !== 'comparison'}>
+          <ComparisonWorkspace />
+        </div>
       </main>
       <footer className="site-footer">
         <span>margin / Article intelligence</span>

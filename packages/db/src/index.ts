@@ -2,16 +2,24 @@ import { randomUUID } from 'node:crypto'
 import { tryCatch } from '@maxmorozoff/try-catch-tuple'
 import { Pool } from 'pg'
 import { PgBoss } from 'pg-boss'
-import { articleAnalysisInputSchema } from '@article/schemas'
+import {
+  articleAnalysisInputSchema,
+  articleComparisonResultSchema,
+  submitComparisonSchema,
+} from '@article/schemas'
 import type {
   AnalysisHistoryItem,
   AnalysisStatus,
   ArticleAnalysisResult,
+  ArticleComparisonInput,
+  ComparisonStatus,
 } from '@article/schemas'
 import type { PoolClient } from 'pg'
 
 /** Single queue for classification and briefing generation. */
 export const ANALYSIS_QUEUE = 'article-analysis'
+/** Comparison jobs use pg-boss payload/output storage and no application table. */
+export const COMPARISON_QUEUE = 'article-comparison'
 /** A crashed worker's job becomes failed after this timeout and the next maintenance pass. */
 export const ANALYSIS_EXPIRY_SECONDS = 120
 
@@ -90,11 +98,82 @@ export async function configureQueue(boss: PgBoss) {
   await boss.createQueue(ANALYSIS_QUEUE, options)
   await boss.updateQueue(ANALYSIS_QUEUE, options)
 
+  await boss.createQueue(COMPARISON_QUEUE, options)
+  await boss.updateQueue(COMPARISON_QUEUE, options)
+
   // Jobs queued by the previous implementation keep their original retry settings.
   // Update those too when migrating; workers must be stopped during this change.
   for (const job of await boss.findJobs(ANALYSIS_QUEUE, { queued: true })) {
     await boss.update(ANALYSIS_QUEUE, undefined, { id: job.id, retryLimit: 0 })
   }
+}
+
+/**
+ * Queues two source articles directly in pg-boss. The request ID doubles as the
+ * job ID so a lost submission response can be retried without another LLM call.
+ * No application table is read or written.
+ */
+export async function submitComparison(
+  db: Database,
+  input: ArticleComparisonInput & { requestId: string },
+) {
+  const { articleA, articleB, requestId } = submitComparisonSchema.parse(input)
+  const jobData = { articleA, articleB }
+  const existing = (
+    await db.boss.findJobs<ArticleComparisonInput>(COMPARISON_QUEUE, {
+      id: requestId,
+    })
+  ).at(0)
+  if (existing) {
+    if (
+      existing.data.articleA !== articleA ||
+      existing.data.articleB !== articleB
+    ) {
+      throw new Error('Idempotency key conflict.')
+    }
+    return { comparisonId: existing.id }
+  }
+
+  const jobId = await db.boss.send(COMPARISON_QUEUE, jobData, {
+    id: requestId,
+  })
+  if (!jobId) throw new Error('Comparison could not be queued.')
+  return { comparisonId: jobId }
+}
+
+const interruptedComparisonError: Extract<
+  ComparisonStatus,
+  { state: 'failed' }
+>['error'] = {
+  code: 'PROVIDER_ERROR',
+  message: 'Comparison could not finish. Please submit again.',
+  retryable: true,
+}
+
+/** Reads comparison progress and validates completed pg-boss output. */
+export async function getComparisonStatus(
+  db: Database,
+  id: string,
+): Promise<ComparisonStatus | null> {
+  const job = (
+    await db.boss.findJobs<ArticleComparisonInput>(COMPARISON_QUEUE, { id })
+  ).at(0)
+  if (!job) return null
+  if (job.state === 'created' || job.state === 'retry') {
+    return { id, state: 'queued' }
+  }
+  if (job.state === 'active') return { id, state: 'processing' }
+  if (job.state === 'failed' || job.state === 'cancelled') {
+    return { id, state: 'failed', error: interruptedComparisonError }
+  }
+
+  const result = articleComparisonResultSchema.safeParse(job.output)
+  if (!result.success) {
+    return { id, state: 'failed', error: interruptedComparisonError }
+  }
+  return result.data.ok
+    ? { id, state: 'completed', result: result.data }
+    : { id, state: 'failed', error: result.data.error }
 }
 
 /**
